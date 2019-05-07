@@ -27,6 +27,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/service/efs"
 	"github.com/kubernetes-sigs/sig-storage-lib-external-provisioner/controller"
 	"github.com/kubernetes-sigs/sig-storage-lib-external-provisioner/gidallocator"
@@ -70,29 +71,33 @@ func NewEFSProvisioner(client kubernetes.Interface) controller.Provisioner {
 	if dnsName == "" {
 		dnsName = getDNSName(fileSystemID, awsRegion)
 	}
-
 	mountpoint, source, err := getMount(dnsName)
 	if err != nil {
 		glog.Fatal(err)
 	}
-
 	sess, err := session.NewSession()
 	if err != nil {
 		glog.Warningf("couldn't create an AWS session: %v", err)
 	}
-
 	svc := efs.New(sess, &aws.Config{Region: aws.String(awsRegion)})
 	params := &efs.DescribeFileSystemsInput{
 		FileSystemId: aws.String(fileSystemID),
 	}
-
 	_, err = svc.DescribeFileSystems(params)
 	if err != nil {
 		glog.Warningf("couldn't confirm that the EFS file system exists: %v", err)
 	}
+	ec2MetaDataSvc := ec2metadata.New(sess)
+	// Add availability zone to dns name here
+	instanceIdentityDocument, err := ec2MetaDataSvc.GetInstanceIdentityDocument()
+	if err != nil {
+		glog.Fatalf("couldn't retrieve instance metadata identity document: %v", err)
+	}
+	dnsNameAZ := instanceIdentityDocument.AvailabilityZone + "." + dnsName
+	glog.Errorf("generated dns name from availability zone: %v", dnsNameAZ)
 
 	return &efsProvisioner{
-		dnsName:    dnsName,
+		dnsName:    dnsNameAZ,
 		mountpoint: mountpoint,
 		source:     source,
 		allocator:  gidallocator.New(client),
